@@ -362,16 +362,53 @@ class Dataset:
 
         # if list of rows
         if isinstance(pickle[0], list):
+            # Validate everything before touching the current content, so a
+            # failing import does not wipe an already loaded dataset.
+            width = len(pickle[0])
+            for row in pickle:
+                if not isinstance(row, list):
+                    raise UnsupportedFormat(error_details)
+                if not self._dynamic_columns and len(row) != width:
+                    raise InvalidDimensions(
+                        "Rows must all have the same length: expected "
+                        f"{width} values, got {len(row)}."
+                    )
             self.wipe()
             for row in pickle:
                 self.append(Row(row))
 
         # if list of objects
         elif isinstance(pickle[0], dict):
+            # Align values by field name, not by position, so rows with keys
+            # in a different order still land in the right columns. Validate
+            # all rows before wiping the current content.
+            headers = list(pickle[0].keys())
+            rows = []
+            for index, row in enumerate(pickle):
+                if not isinstance(row, dict):
+                    raise UnsupportedFormat(error_details)
+                missing = [header for header in headers if header not in row]
+                extra = [key for key in row if key not in headers]
+                if missing or extra:
+                    message = f"Row {index} does not match the expected fields."
+                    if missing:
+                        message += (
+                            " Missing field(s): "
+                            + ", ".join(repr(field) for field in missing)
+                            + "."
+                        )
+                    if extra:
+                        message += (
+                            " Unexpected field(s): "
+                            + ", ".join(repr(field) for field in extra)
+                            + "."
+                        )
+                    raise InvalidDimensions(message)
+                rows.append([row[header] for header in headers])
             self.wipe()
-            self.headers = list(pickle[0].keys())
-            for row in pickle:
-                self.append(Row(list(row.values())))
+            self.headers = headers
+            for row in rows:
+                self.append(Row(row))
         else:
             raise UnsupportedFormat(error_details)
 

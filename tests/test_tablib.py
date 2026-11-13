@@ -941,6 +941,12 @@ class RSTTests(BaseTestCase):
 
 
 class CSVTests(BaseTestCase):
+    def test_csv_export_duplicate_headers_preserved(self):
+        """CSV keeps repeated column names and all their values."""
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        self.assertEqual(dset.export('csv'), 'id,id\r\n1,2\r\n')
+
     def test_csv_format_detect(self):
         """Test CSV format detection."""
 
@@ -1189,6 +1195,12 @@ class CSVTests(BaseTestCase):
 
 
 class TSVTests(BaseTestCase):
+    def test_tsv_export_duplicate_headers_preserved(self):
+        """TSV keeps repeated column names and all their values."""
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        self.assertEqual(dset.export('tsv'), 'id\tid\r\n1\t2\r\n')
+
     def test_tsv_import_set(self):
         """Generate and import TSV set serialization."""
         data.append(self.john)
@@ -1775,6 +1787,63 @@ class JSONTests(BaseTestCase):
         dset = tablib.Dataset().load(in_stream=input_json, format="json")
         self.assertEqual(dset.export("yaml"), expected_yaml)
 
+    def test_json_export_duplicate_headers_raises(self):
+        """JSON cannot represent repeated column names: it must raise
+        instead of silently dropping columns."""
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        with self.assertRaises(ValueError) as cm:
+            dset.export('json')
+        self.assertIn("'id'", str(cm.exception))
+
+    def test_json_export_book_duplicate_headers_raises(self):
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        book.add_sheet(dset)
+        with self.assertRaises(ValueError):
+            book.export('json')
+
+    def test_json_import_aligns_by_field_name(self):
+        """Rows whose keys are in a different order must be aligned by
+        field name, not by position."""
+        dset = tablib.Dataset().load(
+            '[{"id": 1, "name": "a"}, {"name": "b", "id": 2}]', 'json'
+        )
+        self.assertEqual(dset.headers, ['id', 'name'])
+        self.assertEqual(
+            dset.dict, [{'id': 1, 'name': 'a'}, {'id': 2, 'name': 'b'}]
+        )
+
+    def test_json_import_names_missing_field(self):
+        with self.assertRaises(ValueError) as cm:
+            tablib.Dataset().load('[{"id": 1, "name": "a"}, {"id": 2}]', 'json')
+        self.assertIn("'name'", str(cm.exception))
+
+    def test_json_import_names_unexpected_field(self):
+        with self.assertRaises(ValueError) as cm:
+            tablib.Dataset().load('[{"id": 1}, {"id": 2, "zzz": 9}]', 'json')
+        self.assertIn("'zzz'", str(cm.exception))
+
+    def test_json_import_failure_preserves_data(self):
+        """A failing import must not wipe the already loaded dataset."""
+        dset = tablib.Dataset(headers=['a'])
+        dset.append([1])
+        with self.assertRaises(ValueError):
+            dset.load('{invalid json', 'json')
+        self.assertEqual(dset.headers, ['a'])
+        self.assertEqual(dset[0], (1,))
+        with self.assertRaises(ValueError):
+            dset.load('[{"a": 1}, {"a": 1, "b": 2}]', 'json')
+        self.assertEqual(dset.headers, ['a'])
+        self.assertEqual(dset[0], (1,))
+
+    def test_json_import_empty_clears_dataset(self):
+        dset = tablib.Dataset(headers=['a'])
+        dset.append([1])
+        dset.load('[]', 'json')
+        self.assertEqual(dset.height, 0)
+        self.assertIsNone(dset.headers)
+
 
 class YAMLTests(BaseTestCase):
     def test_yaml_format_detect(self):
@@ -1847,6 +1916,85 @@ class YAMLTests(BaseTestCase):
         with yaml_source.open('rb') as fh:
             with self.assertRaises(UnsupportedFormat):
                 tablib.Dataset().load(fh, 'yaml')
+
+    def test_yaml_export_duplicate_headers_raises(self):
+        """YAML cannot represent repeated column names: it must raise
+        instead of silently dropping columns."""
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        with self.assertRaises(ValueError) as cm:
+            dset.export('yaml')
+        self.assertIn("'id'", str(cm.exception))
+
+    def test_yaml_export_book_duplicate_headers_raises(self):
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        book.add_sheet(dset)
+        with self.assertRaises(ValueError):
+            book.export('yaml')
+
+    def test_yaml_export_serializes_objects_as_strings(self):
+        """Decimal, UUID, dates and times must be exported as strings,
+        like the JSON format does."""
+        address_id = uuid4()
+        dset = tablib.Dataset(headers=['amount', 'uid', 'day', 'dt', 't'])
+        dset.append([
+            Decimal('3.14'),
+            address_id,
+            dt.date(2026, 11, 13),
+            dt.datetime(2026, 11, 13, 1, 2, 3),
+            dt.time(8, 30),
+        ])
+        exported = dset.export('yaml')
+        reloaded = tablib.Dataset().load(exported, 'yaml')
+        self.assertEqual(reloaded.dict, [{
+            'amount': '3.14',
+            'uid': str(address_id),
+            'day': '2026-11-13',
+            'dt': '2026-11-13T01:02:03',
+            't': '08:30:00',
+        }])
+
+    def test_yaml_import_aligns_by_field_name(self):
+        dset = tablib.Dataset().load(
+            '- {id: 1, name: a}\n- {name: b, id: 2}\n', 'yaml'
+        )
+        self.assertEqual(dset.headers, ['id', 'name'])
+        self.assertEqual(
+            dset.dict, [{'id': 1, 'name': 'a'}, {'id': 2, 'name': 'b'}]
+        )
+
+    def test_yaml_import_failure_preserves_data(self):
+        """A failing import must not wipe the already loaded dataset."""
+        dset = tablib.Dataset(headers=['a'])
+        dset.append([1])
+        with self.assertRaises(ValueError):
+            dset.load('- {a: 1}\n- {a: 1, b: 2}\n', 'yaml')
+        self.assertEqual(dset.headers, ['a'])
+        self.assertEqual(dset[0], (1,))
+
+
+@unittest.skipIf(pandas is None, "pandas is not installed")
+class DataFrameTests(BaseTestCase):
+    def test_df_export_duplicate_headers_kept(self):
+        """Both duplicated columns must be present in the DataFrame,
+        each with its own values."""
+        dset = tablib.Dataset(headers=['id', 'id'])
+        dset.append([1, 2])
+        dset.append([3, 4])
+        df = dset.export('df')
+        self.assertEqual(list(df.columns), ['id', 'id'])
+        self.assertEqual(df.iloc[0].tolist(), [1, 2])
+        self.assertEqual(df.iloc[1].tolist(), [3, 4])
+
+    def test_df_export_column_order_and_values(self):
+        dset = tablib.Dataset(headers=['id', 'name'])
+        dset.append([1, 'a'])
+        dset.append([2, 'b'])
+        df = dset.export('df')
+        self.assertEqual(list(df.columns), ['id', 'name'])
+        self.assertEqual(df.to_dict(orient='records'),
+                         [{'id': 1, 'name': 'a'}, {'id': 2, 'name': 'b'}])
 
 
 class LatexTests(BaseTestCase):
