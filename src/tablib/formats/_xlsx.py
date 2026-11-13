@@ -11,7 +11,6 @@ __lazy_modules__ = {
     "openpyxl.workbook",
 }
 
-import re
 from io import BytesIO
 
 from openpyxl.reader.excel import ExcelReader, load_workbook
@@ -21,11 +20,15 @@ from openpyxl.workbook import Workbook
 
 import tablib
 
-INVALID_TITLE_REGEX = re.compile(r'[\\*?:/\[\]]')
+from ._sheet_titles import (
+    INVALID_TITLE_REGEX,  # noqa: F401  # backwards-compatible re-export
+    safe_excel_sheet_title,
+    validate_book_sheet_titles,
+)
 
 
 def safe_xlsx_sheet_title(s, replace="-"):
-    return re.sub(INVALID_TITLE_REGEX, replace, s)[:31]
+    return safe_excel_sheet_title(s, replace)
 
 
 class XLSXFormat:
@@ -88,6 +91,10 @@ class XLSXFormat:
         """Returns XLSX representation of DataBook.
         See export_set().
         """
+        validate_book_sheet_titles(
+            databook,
+            normalize=lambda title: safe_excel_sheet_title(title, invalid_char_subst),
+        )
 
         wb = Workbook()
         for sheet in wb.worksheets:

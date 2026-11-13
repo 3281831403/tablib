@@ -20,3 +20,11 @@ class HeadersNeeded(TablibException, AttributeError):
 
 class UnsupportedFormat(TablibException, NotImplementedError):
     """Format not supported."""
+
+
+class DuplicateSheetName(TablibException, ValueError):
+    """Two sheets of a Databook resolve to the same worksheet name."""
+
+
+class EmptyDatabook(TablibException, ValueError):
+    """A Databook without any sheets cannot be exported to a workbook."""

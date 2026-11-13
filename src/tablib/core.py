@@ -18,7 +18,9 @@ __lazy_modules__ = {
 from copy import copy
 from operator import itemgetter
 
-from .exceptions import (
+from .exceptions import (  # noqa: F401  # re-exported via tablib
+    DuplicateSheetName,
+    EmptyDatabook,
     HeadersNeeded,
     InvalidDatasetIndex,
     InvalidDatasetType,

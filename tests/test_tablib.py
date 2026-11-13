@@ -1235,6 +1235,116 @@ class TSVTests(BaseTestCase):
         self.assertEqual(tsv, self.founders.tsv)
 
 
+class WorkbookSheetNamingTests(BaseTestCase):
+    """The XLS, XLSX and ODS workbook formats share one sheet-naming rule."""
+
+    WORKBOOK_FORMATS = ('xlsx', 'xls', 'ods')
+
+    def _book_with_titles(self, titles):
+        databook = tablib.Databook()
+        for title in titles:
+            dataset = tablib.Dataset(headers=('a', 'b'), title=title)
+            dataset.append((1, 2))
+            databook.add_sheet(dataset)
+        return databook
+
+    def test_duplicate_sheet_titles_raise_in_every_format(self):
+        for fmt in self.WORKBOOK_FORMATS:
+            with self.subTest(fmt=fmt):
+                databook = self._book_with_titles(['Dup', 'Dup'])
+                with self.assertRaises(tablib.DuplicateSheetName) as ctx:
+                    databook.export(fmt)
+                # The error points at both original titles and the colliding name.
+                self.assertIn("'Dup'", str(ctx.exception))
+
+    def test_normalized_title_collision_raises_in_excel_formats(self):
+        # 'a/b' is normalized to 'a-b' in the Excel formats, colliding
+        # with the sheet whose original title already is 'a-b'.
+        for fmt in ('xlsx', 'xls'):
+            with self.subTest(fmt=fmt):
+                databook = self._book_with_titles(['a/b', 'a-b'])
+                with self.assertRaises(tablib.DuplicateSheetName) as ctx:
+                    databook.export(fmt)
+                message = str(ctx.exception)
+                self.assertIn("'a/b'", message)
+                self.assertIn("'a-b'", message)
+
+    def test_ods_keeps_titles_verbatim_without_collision(self):
+        # ODS does not normalize titles, so 'a/b' and 'a-b' stay distinct.
+        databook = self._book_with_titles(['a/b', 'a-b'])
+        blob = databook.export('ods')
+        reloaded = tablib.Databook().load(blob, 'ods')
+        self.assertEqual(
+            [sheet.title for sheet in reloaded.sheets()], ['a/b', 'a-b']
+        )
+
+    def test_truncated_titles_that_collide_raise(self):
+        # Excel truncates sheet names to 31 chars; two long titles that
+        # only differ past the limit resolve to the same worksheet name.
+        long_a = 'q' * 32
+        long_b = 'q' * 31 + 'z'
+        for fmt in ('xlsx', 'xls'):
+            with self.subTest(fmt=fmt):
+                databook = self._book_with_titles([long_a, long_b])
+                with self.assertRaises(tablib.DuplicateSheetName) as ctx:
+                    databook.export(fmt)
+                self.assertIn(long_a, str(ctx.exception))
+                self.assertIn(long_b, str(ctx.exception))
+
+    def test_empty_databook_raises_understandable_error(self):
+        for fmt in self.WORKBOOK_FORMATS:
+            with self.subTest(fmt=fmt):
+                with self.assertRaises(tablib.EmptyDatabook):
+                    tablib.Databook().export(fmt)
+
+    def test_distinct_titles_still_export_and_roundtrip(self):
+        databook = self._book_with_titles(['First', 'Second'])
+        for fmt in self.WORKBOOK_FORMATS:
+            with self.subTest(fmt=fmt):
+                blob = databook.export(fmt)
+                reloaded = tablib.Databook().load(blob, fmt)
+                self.assertEqual(
+                    [sheet.title for sheet in reloaded.sheets()],
+                    ['First', 'Second'],
+                )
+
+    def test_untitled_sheets_keep_generated_names(self):
+        databook = tablib.Databook()
+        for _ in range(2):
+            dataset = tablib.Dataset(headers=('a', 'b'))
+            dataset.append((1, 2))
+            databook.add_sheet(dataset)
+        for fmt in self.WORKBOOK_FORMATS:
+            with self.subTest(fmt=fmt):
+                blob = databook.export(fmt)
+                reloaded = tablib.Databook().load(blob, fmt)
+                self.assertEqual(
+                    [sheet.title for sheet in reloaded.sheets()],
+                    ['Sheet0', 'Sheet1'],
+                )
+
+    def test_invalid_char_subst_collision_is_reported(self):
+        # With a custom substitution both titles normalize to the same name.
+        for fmt in ('xlsx', 'xls'):
+            with self.subTest(fmt=fmt):
+                databook = self._book_with_titles(['a/b', 'a?b'])
+                with self.assertRaises(tablib.DuplicateSheetName):
+                    databook.export(fmt, invalid_char_subst='-')
+
+    def test_single_sheet_invalid_character_replacement_unchanged(self):
+        # The single-sheet export must keep sanitizing exactly as before.
+        dataset = tablib.Dataset(
+            title='bad name \\/*?:[]qwertyuiopasdfghjklzxcvbnm'
+        )
+        for fmt in ('xlsx', 'xls'):
+            with self.subTest(fmt=fmt):
+                blob = dataset.export(fmt)
+                reloaded = tablib.Dataset().load(blob, fmt)
+                self.assertEqual(
+                    reloaded.title, 'bad name -------qwertyuiopasdfg'
+                )
+
+
 class ODSTests(BaseTestCase):
     FORMAT_CONVERT = {
         'yearlong': '%Y',

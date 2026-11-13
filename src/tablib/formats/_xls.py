@@ -4,7 +4,6 @@
 __lazy_modules__ = {"datetime", "io", "xlrd", "xlrd.xldate"}
 
 import datetime
-import re
 from io import BytesIO
 
 import xlrd
@@ -13,6 +12,12 @@ from xlrd.xldate import xldate_as_datetime
 
 import tablib
 
+from ._sheet_titles import (
+    INVALID_TITLE_REGEX,  # noqa: F401  # backwards-compatible re-export
+    safe_excel_sheet_title,
+    validate_book_sheet_titles,
+)
+
 # special styles
 wrap = xlwt.easyxf("alignment: wrap on")
 bold = xlwt.easyxf("font: bold on")
@@ -20,11 +25,9 @@ datetime_style = xlwt.easyxf(num_format_str='M/D/YY h:mm')
 date_style = xlwt.easyxf(num_format_str='M/D/YY')
 time_style = xlwt.easyxf(num_format_str='h:mm:ss')
 
-INVALID_TITLE_REGEX = re.compile(r'[\\*?:/\[\]]')
-
 
 def safe_xls_sheet_title(s, replace="-"):
-    return re.sub(INVALID_TITLE_REGEX, replace, s)[:31]
+    return safe_excel_sheet_title(s, replace)
 
 
 class XLSFormat:
@@ -77,6 +80,10 @@ class XLSFormat:
     @classmethod
     def export_book(cls, databook, invalid_char_subst="-"):
         """Returns XLS representation of DataBook."""
+        validate_book_sheet_titles(
+            databook,
+            normalize=lambda title: safe_excel_sheet_title(title, invalid_char_subst),
+        )
 
         wb = xlwt.Workbook(encoding='utf8')
 

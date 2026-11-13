@@ -11,6 +11,8 @@ from odf import number, opendocument, style, table, text
 
 import tablib
 
+from ._sheet_titles import validate_book_sheet_titles
+
 bold = style.Style(name="bold", family="paragraph")
 bold.addElement(style.TextProperties(
     fontweight="bold",
@@ -93,6 +95,9 @@ class ODSFormat:
     @classmethod
     def export_book(cls, databook):
         """Returns ODF representation of DataBook."""
+        # ODS stores worksheet titles verbatim; check uniqueness on the
+        # original titles so the three workbook formats share one rule.
+        validate_book_sheet_titles(databook)
 
         wb = opendocument.OpenDocumentSpreadsheet()
         wb.automaticstyles.addElement(bold)
