@@ -1,7 +1,7 @@
 """ Tablib - ODF Support.
 """
 
-__lazy_modules__ = {"datetime", "io", "numbers"}
+__lazy_modules__ = {"datetime", "io", "numbers", "tablib.formats._sheetvalues"}
 
 import datetime as dt
 import numbers
@@ -11,12 +11,22 @@ from odf import number, opendocument, style, table, text
 
 import tablib
 
+from ._sheetvalues import decode_cell, encode_cell
+
 bold = style.Style(name="bold", family="paragraph")
 bold.addElement(style.TextProperties(
     fontweight="bold",
     fontweightasian="bold",
     fontweightcomplex="bold",
 ))
+
+
+def parse_number(value):
+    """Parse a numeric cell value, as an int when it has no fractional part."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return float(value)
 
 
 def set_date_style(style):
@@ -120,7 +130,10 @@ class ODSFormat:
         for i, row in enumerate(rows):
             if i < skip_lines:
                 continue
-            row_vals = [cls.read_cell(cell) for cell in row.childNodes if is_real_cell(cell)]
+            row_vals = [
+                decode_cell(cls.read_cell(cell))
+                for cell in row.childNodes if is_real_cell(cell)
+            ]
             if not row_vals:
                 continue
             if i == skip_lines and headers:
@@ -164,7 +177,7 @@ class ODSFormat:
             if value is None:
                 return ''
             if value_type == 'float':
-                return float(value)
+                return parse_number(value)
             if value_type == 'date':
                 return convert_date(value)
             return value  # Any other type default to 'string'
@@ -213,6 +226,11 @@ class ODSFormat:
             odf_row = table.TableRow(stylename=style)
             ws.addElement(odf_row)
             for j, col in enumerate(row):
+                header = (
+                    dataset.headers[j]
+                    if dataset.headers and j < len(dataset.headers) else None
+                )
+                col = encode_cell(col, header=header, col_idx=j, row_number=row_number)
                 if isinstance(col, bool):
                     cell = table.TableCell(
                         valuetype="boolean",

@@ -20,3 +20,7 @@ class HeadersNeeded(TablibException, AttributeError):
 
 class UnsupportedFormat(TablibException, NotImplementedError):
     """Format not supported."""
+
+
+class UnrepresentableValue(TablibException, ValueError):
+    """A cell value cannot be represented losslessly in the target format."""

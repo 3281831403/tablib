@@ -9,6 +9,7 @@ __lazy_modules__ = {
     "openpyxl.styles",
     "openpyxl.utils",
     "openpyxl.workbook",
+    "tablib.formats._sheetvalues",
 }
 
 import re
@@ -20,6 +21,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.workbook import Workbook
 
 import tablib
+
+from ._sheetvalues import decode_cell, encode_cell
 
 INVALID_TITLE_REGEX = re.compile(r'[\\*?:/\[\]]')
 
@@ -116,7 +119,7 @@ class XLSXFormat:
         for i, row in enumerate(sheet.rows):
             if i < skip_lines:
                 continue
-            row_vals = [c.value for c in row]
+            row_vals = [decode_cell(c.value) for c in row]
             if i == skip_lines and headers:
                 dset.headers = row_vals
             else:
@@ -158,6 +161,7 @@ class XLSXFormat:
 
         bold = Font(bold=True)
         wrap_text = Alignment(wrap_text=True)
+        headers = dataset.headers
 
         for i, row in enumerate(_package):
             row_number = i + 1
@@ -180,6 +184,9 @@ class XLSXFormat:
                 else:
                     if '\n' in str(col):
                         cell.alignment = wrap_text
+
+                header = headers[j] if headers and j < len(headers) else None
+                col = encode_cell(col, header=header, col_idx=j, row_number=row_number)
 
                 try:
                     cell.value = col
