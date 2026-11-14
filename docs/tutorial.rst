@@ -111,6 +111,16 @@ Creating a :class:`tablib.Dataset` object by importing a pre-existing file is si
 
 This detects what sort of data is being passed in, and uses an appropriate formatter to do the import. So you can import from a variety of different file types.
 
+Text sources such as CSV and TSV can also be passed as bytes or opened in
+binary mode; bytes are decoded as UTF-8 with a leading BOM removed. For files
+in another encoding, pass the ``encoding`` parameter::
+
+    with open('data.csv', 'rb') as fh:
+        imported_data = Dataset().load(fh)
+
+    with open('data.csv', 'rb') as fh:
+        imported_data = Dataset().load(fh, 'csv', encoding='gbk')
+
 .. admonition:: Source without headers
 
     When the format is :class:`csv <Dataset.csv>`, :class:`tsv <Dataset.tsv>`, :class:`dbf <Dataset.dbf>`, :class:`xls <Dataset.xls>` or :class:`xlsx <Dataset.xlsx>`, and the data source does not have headers, the import should be done as follows ::

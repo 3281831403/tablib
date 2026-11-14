@@ -26,7 +26,7 @@ from .exceptions import (
     UnsupportedFormat,
 )
 from .formats import registry
-from .utils import normalize_input
+from .utils import no_format_message, normalize_input
 
 __title__ = 'tablib'
 __author__ = 'Kenneth Reitz'
@@ -420,7 +420,11 @@ class Dataset:
 
         stream = normalize_input(in_stream)
         if not format:
-            format = detect_format(stream)
+            format = detect_format(stream, encoding=kwargs.get('encoding'))
+            if format is None:
+                message = no_format_message(stream)
+                if message:
+                    raise UnsupportedFormat(message)
 
         fmt = registry.get_format(format)
         if not hasattr(fmt, 'import_set'):
@@ -912,7 +916,11 @@ class Databook:
 
         stream = normalize_input(in_stream)
         if not format:
-            format = detect_format(stream)
+            format = detect_format(stream, encoding=kwargs.get('encoding'))
+            if format is None:
+                message = no_format_message(stream)
+                if message:
+                    raise UnsupportedFormat(message)
 
         fmt = registry.get_format(format)
         if not hasattr(fmt, 'import_book'):
@@ -934,13 +942,20 @@ class Databook:
         return fmt.export_book(self, **kwargs)
 
 
-def detect_format(stream):
-    """Return format name of given stream (file-like object, string, or bytestring)."""
+def detect_format(stream, encoding=None):
+    """Return format name of given stream (file-like object, string, or bytestring).
+
+    ``encoding`` is forwarded to formats able to decode byte streams, such as
+    the csv and tsv formats.
+    """
     stream = normalize_input(stream)
     fmt_title = None
     for fmt in registry.formats():
         try:
-            if fmt.detect(stream):
+            kwargs = {}
+            if encoding is not None and getattr(fmt, 'supports_encoding', False):
+                kwargs['encoding'] = encoding
+            if fmt.detect(stream, **kwargs):
                 fmt_title = fmt.title
                 break
         except AttributeError:

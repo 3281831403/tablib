@@ -59,6 +59,21 @@ functions. For example::
 
     dataset.export('csv', delimiter=' ', quotechar='|')
 
+The ``csv`` and ``tsv`` formats accept bytes and binary file-like objects, not
+only text. Bytes are decoded as UTF-8 with a leading byte-order mark (BOM)
+removed, so a CSV file read with ``open(path, 'rb')`` (or received as bytes from
+another service) can be loaded without an explicit format::
+
+    with open('data.csv', 'rb') as f:
+        dataset = tablib.Dataset().load(f)
+
+If the file uses another encoding, pass it with the ``encoding`` parameter::
+
+    tablib.import_set(your_data_stream, format='csv', encoding='gbk')
+
+Binary formats such as ``xlsx``, ``xls``, ``ods`` and ``dbf`` are unaffected and
+keep being autodetected from bytes.
+
 .. admonition:: Line endings
 
      Exporting uses \\r\\n line endings by default so, make sure to include

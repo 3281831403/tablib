@@ -439,6 +439,9 @@ class TablibTestCase(BaseTestCase):
         _tsv = '1\t2\t3\n4\t5\t6\n7\t8\t9\n'
         self.assertEqual(tablib.detect_format(_tsv), 'tsv')
 
+        self.assertEqual(tablib.detect_format(_csv.encode()), 'csv')
+        self.assertEqual(tablib.detect_format(_tsv.encode()), 'tsv')
+
         _bunk = StringIO(
             '¡¡¡¡¡¡---///\n\n\n'
             '¡¡£™∞¢£§∞§¶•¶ª∞¶•ªº••ª–º§•†•§º¶•†¥ª–º•§ƒø¥¨©πƒø†ˆ¥ç©¨√øˆ¥≈†ƒ¥ç©ø¨çˆ¥ƒçø¶'
@@ -957,6 +960,82 @@ class CSVTests(BaseTestCase):
         self.assertTrue(fmt.detect(_csv))
         self.assertFalse(fmt.detect(_bunk))
 
+    def test_csv_bytes_detect(self):
+        """Bytes and binary streams are detected as CSV/TSV."""
+        self.assertEqual(tablib.detect_format(b'1,2,3\n4,5,6\n7,8,9\n'), 'csv')
+        self.assertEqual(tablib.detect_format(BytesIO(b'1,2,3\n4,5,6\n7,8,9\n')), 'csv')
+        self.assertEqual(tablib.detect_format(b'1\t2\t3\n4\t5\t6\n7\t8\t9\n'), 'tsv')
+        self.assertEqual(
+            tablib.detect_format(BytesIO(b'1\t2\t3\n4\t5\t6\n7\t8\t9\n')), 'tsv'
+        )
+
+    def test_csv_bytes_load(self):
+        """A bytes CSV stream loads without an explicit format."""
+        dset = tablib.Dataset().load(b'first_name,last_name,gpa\nJohn,Adams,90\n')
+        self.assertEqual(dset.headers, ['first_name', 'last_name', 'gpa'])
+        self.assertEqual(dset[0], ('John', 'Adams', '90'))
+
+    def test_csv_binary_file_load(self):
+        """A CSV file opened in binary mode loads without an explicit format."""
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as fh:
+            fh.write(b'first_name,last_name,gpa\nJohn,Adams,90\n')
+            path = fh.name
+        try:
+            with open(path, 'rb') as fh:
+                dset = tablib.Dataset().load(fh)
+                self.assertEqual(dset.headers, ['first_name', 'last_name', 'gpa'])
+                self.assertFalse(fh.closed)
+            with open(path, 'rb') as fh:
+                dset = tablib.Dataset().load(fh, 'csv')
+                self.assertEqual(dset[0], ('John', 'Adams', '90'))
+                self.assertFalse(fh.closed)
+        finally:
+            Path(path).unlink()
+
+    def test_csv_bom_header(self):
+        """A UTF-8 BOM must not become part of the first header."""
+        bom_csv = b'\xef\xbb\xbffirst_name,last_name,gpa\nJohn,Adams,90\n'
+        for stream in (bom_csv, BytesIO(bom_csv)):
+            with self.subTest(stream=type(stream).__name__):
+                dset = tablib.Dataset().load(stream)
+                self.assertEqual(dset.headers, ['first_name', 'last_name', 'gpa'])
+        # The BOM also has to be stripped from text streams produced by
+        # reading a UTF-8 file without 'utf-8-sig'.
+        dset = tablib.Dataset().load(StringIO('\ufefffirst_name,last_name,gpa\nJohn,Adams,90\n'))
+        self.assertEqual(dset.headers, ['first_name', 'last_name', 'gpa'])
+
+    def test_csv_bom_bytes_detect(self):
+        self.assertEqual(
+            tablib.detect_format(b'\xef\xbb\xbf1,2,3\n4,5,6\n7,8,9\n'), 'csv'
+        )
+
+    def test_csv_non_utf8_encoding_explicit(self):
+        """A non-UTF-8 file loads when its encoding is given."""
+        gbk_csv = '姓名,年龄\n张三,30\n'.encode('gbk')
+        dset = tablib.Dataset().load(gbk_csv, encoding='gbk')
+        self.assertEqual(dset.headers, ['姓名', '年龄'])
+        self.assertEqual(dset[0], ('张三', '30'))
+
+    def test_csv_non_utf8_encoding_detection_error(self):
+        """An undecodable stream must not be reported as "no format None"."""
+        gbk_csv = '姓名,年龄\n张三,30\n'.encode('gbk')
+        for stream in (gbk_csv, BytesIO(gbk_csv)):
+            with self.subTest(stream=type(stream).__name__):
+                with self.assertRaises(UnsupportedFormat) as cm:
+                    tablib.Dataset().load(stream)
+                message = str(cm.exception)
+                self.assertIn('UTF-8', message)
+                self.assertNotIn("'None'", message)
+
+    def test_csv_bytes_do_not_break_binary_formats(self):
+        """Binary formats keep being detected, not mistaken for CSV."""
+        data = tablib.Dataset(headers=['a', 'b'])
+        data.append([1, 2])
+        for format_ in ('xlsx', 'xls', 'ods', 'dbf'):
+            with self.subTest(format=format_):
+                exported = data.export(format_)
+                self.assertEqual(tablib.detect_format(exported), format_)
+
     def test_csv_import_set(self):
         """Generate and import CSV set serialization."""
         data.append(self.john)
@@ -1189,6 +1268,17 @@ class CSVTests(BaseTestCase):
 
 
 class TSVTests(BaseTestCase):
+    def test_tsv_bytes_load(self):
+        """A bytes TSV stream loads without an explicit format."""
+        dset = tablib.Dataset().load(b'first_name\tlast_name\tgpa\nJohn\tAdams\t90\n')
+        self.assertEqual(dset.headers, ['first_name', 'last_name', 'gpa'])
+        self.assertEqual(dset[0], ('John', 'Adams', '90'))
+
+    def test_tsv_bom_header(self):
+        """A UTF-8 BOM must not become part of the first header."""
+        dset = tablib.Dataset().load(b'\xef\xbb\xbfa\tb\n1\t2\n')
+        self.assertEqual(dset.headers, ['a', 'b'])
+
     def test_tsv_import_set(self):
         """Generate and import TSV set serialization."""
         data.append(self.john)
