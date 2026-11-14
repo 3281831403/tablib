@@ -214,7 +214,12 @@ class DbfCharacterFieldDef(DbfFieldDef):
         return value.rstrip(b' ').decode('utf-8')
 
     def encodeValue(self, value):
-        """Return raw data string encoded from a ``value``."""
+        """Return raw data string encoded from a ``value``.
+
+        ``None`` is encoded as an empty (blank) character field.
+        """
+        if value is None:
+            return " " * self.length
         return str(value)[:self.length].ljust(self.length)
 
 
@@ -250,6 +255,9 @@ class DbfNumericFieldDef(DbfFieldDef):
 
     def encodeValue(self, value):
         """Return string containing encoded ``value``."""
+        if value is None:
+            # an empty numeric field is represented by spaces
+            return " " * self.length
         _rv = ("%*.*f" % (self.length, self.decimalCount, value))  # noqa: UP031
         if len(_rv) > self.length:
             _ppos = _rv.find(".")
@@ -310,6 +318,8 @@ class DbfLogicalFieldDef(DbfFieldDef):
     def decodeValue(self, value):
         """Return True, False or -1 decoded from ``value``."""
         # Note: value always is 1-char string
+        if isinstance(value, bytes):
+            value = value.decode("latin-1")
         if value == "?":
             return -1
         if value in "NnFf ":
@@ -328,7 +338,7 @@ class DbfLogicalFieldDef(DbfFieldDef):
         """
         if value is True:
             return "T"
-        if value == -1:
+        if value is None or value == -1:
             return "?"
         return "F"
 
@@ -369,6 +379,8 @@ class DbfDateFieldDef(DbfFieldDef):
 
     def decodeValue(self, value):
         """Return a ``datetime.date`` instance decoded from ``value``."""
+        if isinstance(value, bytes):
+            value = value.decode("latin-1")
         if value.strip():
             return utils.getDate(value)
         else:
@@ -423,6 +435,9 @@ class DbfDateTimeFieldDef(DbfFieldDef):
             # LE byteorder
             _rv = struct.pack("<2I", value.toordinal() + self.JDN_GDN_DIFF,
                               (value.hour * 3600 + value.minute * 60 + value.second) * 1000)
+            # the record is assembled from strings and encoded as a whole,
+            # so keep the packed bytes as a latin-1 string of the same length
+            _rv = _rv.decode("latin-1")
         else:
             _rv = "\0" * self.length
         assert len(_rv) == self.length

@@ -2016,6 +2016,199 @@ class DBFTests(BaseTestCase):
         fmt = registry.get_format('dbf')
         self.assertEqual(('dbf',), fmt.extensions)
 
+    def _roundtrip_dbf(self, dataset):
+        """Export the dataset to DBF and read the values back."""
+        from tablib._vendor.dbfpy import dbf as dbfpy
+
+        _dbf = dbfpy.Dbf(BytesIO(dataset.dbf), readOnly=1)
+        try:
+            names = _dbf.fieldNames
+            rows = [
+                [_dbf[index][name] for name in names]
+                for index in range(_dbf.recordCount)
+            ]
+        finally:
+            _dbf.close()
+        return names, rows
+
+    def test_dbf_export_empty_dataset_with_headers(self):
+        """A dataset with headers but no rows must still export."""
+        dataset = tablib.Dataset(headers=['first_name', 'last_name', 'gpa'])
+        exported = dataset.dbf
+
+        # the file ends with the end-of-file marker and contains no records
+        self.assertTrue(exported.endswith(b'\x1a'))
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['FIRST_NAME', 'LAST_NAME', 'GPA'], names)
+        self.assertEqual([], rows)
+
+    def test_dbf_export_fully_empty_columns_default_to_character(self):
+        """Columns containing only None values fall back to text fields."""
+        dataset = tablib.Dataset(headers=['a', 'b'])
+        dataset.append([None, None])
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['A', 'B'], names)
+        self.assertEqual([['', '']], rows)
+
+    def test_dbf_export_none_is_blank_not_literal(self):
+        """None values are stored as blank fields instead of 'None'."""
+        dataset = tablib.Dataset(headers=['name', 'gpa'])
+        dataset.append([None, None])
+        dataset.append(['Adams', 90])
+
+        # no literal None text anywhere in the raw bytes
+        self.assertNotIn(b'None', dataset.dbf)
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['NAME', 'GPA'], names)
+        self.assertEqual(['', 0], rows[0])
+        self.assertEqual(['Adams', 90], rows[1])
+
+    def test_dbf_export_boolean_column_uses_logical_field(self):
+        """A boolean column is inferred from the whole column as logical."""
+        dataset = tablib.Dataset(headers=['flag', 'n'])
+        dataset.append([True, 1])
+        dataset.append([None, 2])
+        dataset.append([False, 3])
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['FLAG', 'N'], names)
+        self.assertEqual([True, 1], rows[0])
+        self.assertEqual([-1, 2], rows[1])
+        self.assertEqual([False, 3], rows[2])
+        self.assertIn(b'T', dataset.dbf)
+        self.assertIn(b'?', dataset.dbf)
+        self.assertIn(b'F', dataset.dbf)
+
+    def test_dbf_export_boolean_not_inferred_from_first_row_only(self):
+        """A None first row must not force a numeric column to text."""
+        dataset = tablib.Dataset(headers=['name', 'gpa'])
+        dataset.append([None, None])
+        dataset.append(['Adams', 90])
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['NAME', 'GPA'], names)
+        self.assertEqual(90, rows[1][1])
+        self.assertIsInstance(rows[1][1], float)
+
+    def test_dbf_export_date_column_uses_date_field(self):
+        """Date columns keep a real date type instead of strings."""
+        birthday = dt.date(2026, 11, 14)
+        dataset = tablib.Dataset(headers=['birthday'])
+        dataset.append([birthday])
+        dataset.append([None])
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual(['BIRTHDAY'], names)
+        self.assertEqual([birthday], rows[0])
+        self.assertEqual([None], rows[1])
+
+    def test_dbf_export_datetime_column_uses_date_field(self):
+        """Datetime values are stored as their calendar date."""
+        moment = dt.datetime(2026, 11, 14, 10, 30, 0)
+        dataset = tablib.Dataset(headers=['moment'])
+        dataset.append([moment])
+        names, rows = self._roundtrip_dbf(dataset)
+        self.assertEqual([moment.date()], rows[0])
+
+    def test_dbf_export_long_header_raises(self):
+        """Field names longer than 10 characters raise naming the column."""
+        dataset = tablib.Dataset(headers=['a_very_long_column_name'])
+        dataset.append(['value'])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 1', str(ctx.exception))
+        self.assertIn('a_very_long_column_name', str(ctx.exception))
+
+    def test_dbf_export_case_insensitive_duplicate_header_raises(self):
+        """Headers differing only by case collide in DBF and must raise."""
+        dataset = tablib.Dataset(headers=['Foo', 'foo'])
+        dataset.append(['a', 'b'])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 2', str(ctx.exception))
+        self.assertIn('FOO', str(ctx.exception))
+
+    def test_dbf_export_nul_in_header_raises(self):
+        """NUL characters are illegal inside DBF field names."""
+        dataset = tablib.Dataset(headers=['na\x00me'])
+        dataset.append(['value'])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 1', str(ctx.exception))
+        self.assertIn('NUL', str(ctx.exception))
+
+    def test_dbf_export_without_headers_raises(self):
+        """DBF fields need names, so a headerless dataset cannot export."""
+        from tablib.exceptions import HeadersNeeded
+
+        dataset = tablib.Dataset()
+        dataset.append(['John', 'Adams', 90])
+        with self.assertRaises(HeadersNeeded):
+            dataset.dbf
+
+    def test_dbf_export_overlong_character_value_raises(self):
+        """Character values wider than 80 bytes must raise, not truncate."""
+        dataset = tablib.Dataset(headers=['note'])
+        dataset.append(['x' * 81])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 1', str(ctx.exception))
+        self.assertIn('note', str(ctx.exception))
+
+    def test_dbf_export_mixed_column_types_raise(self):
+        """A column mixing text and numbers must raise naming the column."""
+        dataset = tablib.Dataset(headers=['value'])
+        dataset.append([1])
+        dataset.append(['two'])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 1', str(ctx.exception))
+        self.assertIn('value', str(ctx.exception))
+
+    def test_dbf_export_unsupported_value_type_raises(self):
+        """Values without a DBF equivalent raise naming the column."""
+        dataset = tablib.Dataset(headers=['value'])
+        dataset.append([{'nested': 'mapping'}])
+        with self.assertRaises(ValueError) as ctx:
+            dataset.dbf
+        self.assertIn('column 1', str(ctx.exception))
+        self.assertIn('dict', str(ctx.exception))
+
+    def test_dbf_export_exact_byte_output_unchanged(self):
+        """The supported text + numeric table must export identical bytes."""
+        dataset = tablib.Dataset()
+        dataset.append(self.john)
+        dataset.append(self.george)
+        dataset.append(self.tom)
+        dataset.headers = self.headers
+
+        expected = (b'\x03r\x06\x06\x03\x00\x00\x00\x81\x00\xab\x00\x00'
+                    b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+                    b'\x00\x00\x00FIRST_NAME\x00C\x00\x00\x00\x00P\x00\x00\x00\x00\x00'
+                    b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00LAST_NAME\x00\x00C\x00'
+                    b'\x00\x00\x00P\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+                    b'\x00\x00GPA\x00\x00\x00\x00\x00\x00\x00\x00N\x00\x00\x00\x00\n'
+                    b'\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\r'
+                    )
+        expected += b' John' + (b' ' * 75)
+        expected += b' Adams' + (b' ' * 74)
+        expected += b' 90.0000000'
+        expected += b' George' + (b' ' * 73)
+        expected += b' Washington' + (b' ' * 69)
+        expected += b' 67.0000000'
+        expected += b' Thomas' + (b' ' * 73)
+        expected += b' Jefferson' + (b' ' * 70)
+        expected += b' 50.0000000'
+        expected += b'\x1a'
+
+        # only the last-update date bytes (positions 1-3) may differ
+        actual = dataset.dbf
+        self.assertEqual(len(expected), len(actual))
+        for index, (expected_byte, actual_byte) in enumerate(zip(expected, actual)):
+            if index in (1, 2, 3):
+                continue
+            self.assertEqual(
+                expected_byte, actual_byte,
+                f'byte {index} differs: {expected_byte} vs {actual_byte}',
+            )
+
 
 class JiraTests(BaseTestCase):
     def test_jira_export(self):

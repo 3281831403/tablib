@@ -118,7 +118,7 @@ class dbf_new:
     def __init__(self):
         self.fields = []
 
-    def add_field(self, name, typ, len, dec=0):
+    def add_field(self, name, typ, len=None, dec=0):
         """Add field definition.
 
         Arguments:

@@ -84,6 +84,22 @@ Import/export using the dBASE_ format.
         with open('output.dbf', 'wb') as f:
             f.write(dataset.export('dbf')
 
+.. admonition:: Field types and constraints
+
+    Each column is exported using a single dBASE field type, inferred from
+    every non-empty value in the column: integers and floats become numeric
+    fields, :class:`~datetime.date` (and :class:`~datetime.datetime`) values
+    become date fields, booleans become logical fields, and strings become
+    character fields. ``None`` values are stored as blank fields. A column
+    that mixes incompatible types, or a value with no dBASE equivalent such
+    as a mapping, raises :class:`ValueError`.
+
+    Field names must be at most 10 characters long and unique
+    case-insensitively, and character values must fit in 80 bytes; violating
+    these limits raises :class:`ValueError` identifying the offending column
+    instead of truncating or renaming data. A dataset with headers but no
+    rows exports as an empty table whose columns default to character fields.
+
 .. _dBASE: https://en.wikipedia.org/wiki/DBase
 
 df (DataFrame)
